@@ -15,5 +15,5 @@ This project analyzes e-commerce sales data to uncover trends, top-performing pr
 ## How to Run
 1. Clone the repository:
    ```bash
-   git clone https://github.com/<your-username>/E-Commerce-Sales-Analysis.git
+   git clone https://github.com/<hellosultan>/E-Commerce-Sales-Analysis.git
    cd E-Commerce-Sales-Analysis
