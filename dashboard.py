@@ -1,4 +1,4 @@
-import sqlite3, pandas as pd, streamlit as st
+import sqlite3, pandas as pd, numpy as np, streamlit as st
 from pathlib import Path
 
 st.set_page_config(page_title="E-Commerce Sales", layout="wide")
@@ -6,30 +6,73 @@ st.set_page_config(page_title="E-Commerce Sales", layout="wide")
 DB_PATH = Path("data/ecommerce.db")
 BUILDER = Path("src/sql/build_db.py")
 
+# ---------- Fallback generator (deterministic) ----------
+def generate_synthetic_df(n_customers=5000, n_products=500, n_orders=50000) -> pd.DataFrame:
+    rng = np.random.default_rng(42)
+
+    # customers
+    segments = ["Consumer", "Corporate", "Enterprise", "Small Biz"]
+    countries = ["US", "UK", "FR", "DE", "IN", "ES", "BH", "QA"]
+    customers = pd.DataFrame({
+        "customer_id": np.arange(1000, 1000 + n_customers),
+        "segment": rng.choice(segments, n_customers, p=[0.45, 0.25, 0.15, 0.15]),
+        "country": rng.choice(countries, n_customers)
+    })
+
+    # products
+    categories = ["Electronics", "Home", "Fashion", "Sports", "Beauty", "Toys", "Books", "Grocery"]
+    base_prices = rng.normal(60, 35, size=n_products).clip(5, 400)
+    products = pd.DataFrame({
+        "product_id": np.arange(1, 1 + n_products),
+        "category": rng.choice(categories, n_products),
+        "base_price": np.round(base_prices, 2)
+    })
+
+    # orders
+    dates = pd.to_datetime("2023-01-01") + pd.to_timedelta(rng.integers(0, 730, size=n_orders), unit="D")
+    discounts = np.round(rng.uniform(0, 0.3, size=n_orders), 2)
+    quantity = rng.integers(1, 5, size=n_orders)
+    shipping = rng.choice(["Standard", "Express", "Two-Day"], size=n_orders, p=[0.6, 0.25, 0.15])
+    status = rng.choice(["Completed", "Refunded", "Pending"], size=n_orders, p=[0.85, 0.05, 0.10])
+
+    orders = pd.DataFrame({
+        "order_id": np.arange(1, 1 + n_orders),
+        "order_date": dates,
+        "quantity": quantity,
+        "discount": discounts,
+        "shipping": shipping,
+        "status": status,
+        "product_id": rng.integers(1, 1 + n_products, size=n_orders),
+        "customer_id": rng.integers(1000, 1000 + n_customers, size=n_orders)
+    })
+
+    # join
+    df = (orders
+          .merge(products, on="product_id", how="left")
+          .merge(customers, on="customer_id", how="left"))
+    df["order_month"] = df["order_date"].dt.to_period("M").dt.to_timestamp()
+    df["revenue"] = (df["base_price"] * (1 - df["discount"])) * df["quantity"]
+    return df
+
 def build_db():
-    """Create data dir and build the SQLite DB."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     import subprocess, sys
     st.info("Building SQLite database (first run)…")
     subprocess.run([sys.executable, str(BUILDER)], check=True)
 
 def tables_ok(conn) -> bool:
-    """Return True if required tables exist."""
     try:
         t = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", conn)
-        need = {"orders", "products", "customers"}
-        return need.issubset(set(t["name"]))
+        return {"orders","products","customers"}.issubset(set(t["name"]))
     except Exception:
         return False
 
 @st.cache_data(show_spinner=True)
-def load_data():
-    # Ensure DB exists
-    if not DB_PATH.exists():
-        build_db()
-
-    # Try read; if it fails or tables missing, rebuild once and retry.
-    def _read():
+def load_data() -> pd.DataFrame:
+    # Try SQLite first
+    try:
+        if not DB_PATH.exists():
+            build_db()
         conn = sqlite3.connect(str(DB_PATH))
         try:
             if not tables_ok(conn):
@@ -48,39 +91,21 @@ def load_data():
                 conn,
                 parse_dates=["order_date"],
             )
-            return df
-        except Exception as e:
-            # Rebuild once more if anything went wrong; then raise if it still fails
             conn.close()
-            build_db()
-            conn = sqlite3.connect(str(DB_PATH))
-            df = pd.read_sql(
-                """
-                SELECT o.order_id, o.order_date, o.quantity, o.discount, o.shipping, o.status,
-                       p.product_id, p.category, p.base_price,
-                       c.customer_id, c.segment, c.country
-                FROM orders o
-                JOIN products p USING(product_id)
-                JOIN customers c USING(customer_id)
-                """,
-                conn,
-                parse_dates=["order_date"],
-            )
+            df["order_month"] = df["order_date"].dt.to_period("M").dt.to_timestamp()
+            df["revenue"] = (df["base_price"] * (1 - df["discount"])) * df["quantity"]
             return df
         finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    df = _read()
-    df["order_month"] = df["order_date"].dt.to_period("M").dt.to_timestamp()
-    df["revenue"] = (df["base_price"] * (1 - df["discount"])) * df["quantity"]
-    return df
+            try: conn.close()
+            except: pass
+    except Exception:
+        # If anything fails (permissions, partial DB, etc.), use deterministic in-memory data
+        st.warning("SQLite unavailable on this run — using synthetic in-memory data.")
+        return generate_synthetic_df()
 
 df = load_data()
 
-# --------------- Sidebar filters ---------------
+# ---------------- Sidebar filters ----------------
 with st.sidebar:
     st.header("Filters")
     min_d, max_d = df["order_date"].min().date(), df["order_date"].max().date()
@@ -94,21 +119,21 @@ with st.sidebar:
     countries = st.multiselect("Country", df["country"].unique().tolist(), default=df["country"].unique().tolist())
 
 mask = (
-    df["status"].isin(status)
-    & df["segment"].isin(segments)
-    & df["category"].isin(categories)
-    & df["country"].isin(countries)
+    df["status"].isin(status) &
+    df["segment"].isin(segments) &
+    df["category"].isin(categories) &
+    df["country"].isin(countries)
 )
 d = df[mask].copy()
 completed = d["status"].eq("Completed")
-refunded = d["status"].eq("Refunded")
+refunded  = d["status"].eq("Refunded")
 
-# --------------- KPIs ---------------
+# ---------------- KPIs ----------------
 revenue = d.loc[completed, "revenue"].sum()
-orders = len(d)
-aov = d.loc[completed, "revenue"].mean() if completed.any() else 0.0
+orders  = len(d)
+aov     = d.loc[completed, "revenue"].mean() if completed.any() else 0.0
 completion_rate = float(completed.mean() * 100)
-refund_rate = float(refunded.mean() * 100)
+refund_rate     = float(refunded.mean() * 100)
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Revenue", f"${revenue:,.0f}")
@@ -117,7 +142,7 @@ c3.metric("AOV", f"${aov:,.2f}")
 c4.metric("Completion Rate", f"{completion_rate:.1f}%")
 c5.metric("Refund Rate", f"{refund_rate:.1f}%")
 
-# --------------- Charts ---------------
+# ---------------- Charts ----------------
 st.subheader("Revenue Over Time")
 st.line_chart(d.loc[completed].groupby("order_month")["revenue"].sum())
 
@@ -127,7 +152,7 @@ st.bar_chart(d.loc[completed].groupby("category")["revenue"].sum().sort_values(a
 st.subheader("Segments by Revenue")
 st.bar_chart(d.loc[completed].groupby("segment")["revenue"].sum().sort_values(ascending=False))
 
-# --------------- Data & Downloads ---------------
+# ---------------- Data + Downloads ----------------
 st.subheader("Filtered Orders (sample)")
 st.dataframe(d.head(500), use_container_width=True)
 
@@ -137,9 +162,9 @@ def to_csv_bytes(df_in: pd.DataFrame) -> bytes:
 
 completed_d = d[d["status"] == "Completed"]
 monthly_kpis = completed_d.groupby("order_month").agg(
-    revenue=("revenue", "sum"),
-    orders=("order_id", "count"),
-    aov=("revenue", "mean"),
+    revenue=("revenue","sum"),
+    orders=("order_id","count"),
+    aov=("revenue","mean"),
 ).reset_index()
 
 rates = d.groupby("order_month")["status"].value_counts(normalize=True).unstack(fill_value=0.0)
@@ -150,8 +175,7 @@ rates = rates[["Completed", "Refunded"]]
 
 monthly_kpis = monthly_kpis.merge(
     rates.mul(100).reset_index()[["order_month", "Completed", "Refunded"]],
-    on="order_month",
-    how="left",
+    on="order_month", how="left"
 ).rename(columns={"Completed": "completion_rate", "Refunded": "refund_rate"}).fillna(0.0)
 
 dl_col1, dl_col2 = st.columns(2)
