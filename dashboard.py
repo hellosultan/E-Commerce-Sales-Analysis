@@ -32,8 +32,32 @@ def load_uploaded(file) -> pd.DataFrame:
     if not required.issubset(df.columns):
         raise ValueError(f"Missing columns: {required - set(df.columns)}")
 
+    # Ensure correct types
     df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
-    df["revenue"] = df["quantity"] * df["unit_price"]
+    df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0)
+    df["unit_price"] = pd.to_numeric(df["unit_price"], errors="coerce").fillna(0)
+    if "discount" in df.columns:
+        df["discount"] = pd.to_numeric(df["discount"], errors="coerce").fillna(0.0)
+
+    # Revenue if missing
+    if "revenue" not in df.columns:
+        discount = df["discount"] if "discount" in df.columns else 0.0
+        df["revenue"] = df["quantity"] * df["unit_price"] * (1 - discount)
+
+    # Order month (needed for charts)
+    if "order_month" not in df.columns:
+        df["order_month"] = df["order_date"].dt.to_period("M").dt.to_timestamp()
+
+    # Default missing dims so filters don't break
+    for col, default in [
+        ("status", "Completed"),
+        ("segment", "Consumer"),
+        ("category", "General"),
+        ("country", "US"),
+    ]:
+        if col not in df.columns:
+            df[col] = default
+
     return df
 # -------- Small helper: CSV bytes --------
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
