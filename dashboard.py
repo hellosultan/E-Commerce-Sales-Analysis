@@ -35,6 +35,10 @@ def load_uploaded(file) -> pd.DataFrame:
     df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
     df["revenue"] = df["quantity"] * df["unit_price"]
     return df
+# -------- Small helper: CSV bytes --------
+def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
+
 # ---------- Helpers ----------
 def build_db():
     import subprocess, sys
@@ -150,26 +154,32 @@ completed = d["status"].eq("Completed")
 refunded  = d["status"].eq("Refunded")
 
 # Allow user to download filtered dataset
+# ---------- Guard: no rows after filters ----------
+if d.empty:
+    st.warning("⚠️ No data matches your filters. Try widening the date range or clearing selections.")
+    st.stop()
+
+# ---------- Quick export: filtered rows ----------
 st.download_button(
-    label="⬇️ Download filtered data as CSV",
-    data=d.to_csv(index=False).encode("utf-8"),
-    file_name="filtered_sales.csv",
+    "⬇️ Download filtered data as CSV",
+    data=to_csv_bytes(d),
+    file_name="filtered_orders.csv",
     mime="text/csv",
 )
 
-# KPIs
-revenue = d.loc[completed, "revenue"].sum()
-orders  = len(d)
-aov     = d.loc[completed, "revenue"].mean() if completed.any() else 0.0
-completion_rate = float(completed.mean() * 100)
-refund_rate     = float(refunded.mean() * 100)
+# ---------- KPIs ----------
+revenue = float(d.loc[completed, "revenue"].sum())
+orders  = int(len(d))
+aov     = float(d.loc[completed, "revenue"].mean()) if completed.any() else 0.0
+completion_rate = float(completed.mean() * 100) if len(d) else 0.0
+refund_rate     = float(refunded.mean() * 100) if len(d) else 0.0
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Revenue", f"${revenue:,.0f}")
-c2.metric("Orders",  f"{orders:,}")
-c3.metric("AOV",     f"${aov:,.2f}")
+c2.metric("Orders", f"{orders:,}")
+c3.metric("AOV", f"${aov:,.2f}")
 c4.metric("Completion Rate", f"{completion_rate:.1f}%")
-c5.metric("Refund Rate",     f"{refund_rate:.1f}%")
+c5.metric("Refund Rate", f"{refund_rate:.1f}%")
 
 # Charts
 st.subheader("Revenue Over Time")
