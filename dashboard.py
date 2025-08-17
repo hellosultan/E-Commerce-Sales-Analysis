@@ -6,10 +6,16 @@ st.set_page_config(page_title="E-Commerce Sales", layout="wide")
 @st.cache_data
 def load_data():
     db = Path("data/ecommerce.db")
+    # 1) Make sure directory exists on Streamlit Cloud
+    db.parent.mkdir(parents=True, exist_ok=True)
+
+    # 2) Build DB if missing (first run)
     if not db.exists():
         import subprocess, sys
         subprocess.run([sys.executable, "src/sql/build_db.py"], check=True)
-    conn = sqlite3.connect(db)
+
+    # 3) Connect with a string path (robust across environments)
+    conn = sqlite3.connect(str(db))
     df = pd.read_sql("""
     SELECT o.order_id, o.order_date, o.quantity, o.discount, o.shipping, o.status,
            p.product_id, p.category, p.base_price,
@@ -28,21 +34,15 @@ df = load_data()
 # ---------------- Sidebar filters ----------------
 with st.sidebar:
     st.header("Filters")
-
-    # Date range
     min_d, max_d = df["order_date"].min().date(), df["order_date"].max().date()
     dr = st.date_input("Date range", value=(min_d, max_d))
     if isinstance(dr, tuple) and len(dr) == 2:
         df = df[(df["order_date"].dt.date >= dr[0]) & (df["order_date"].dt.date <= dr[1])]
 
-    status = st.multiselect("Status", df["status"].unique().tolist(),
-                            default=["Completed"])
-    segments = st.multiselect("Segment", df["segment"].unique().tolist(),
-                              default=df["segment"].unique().tolist())
-    categories = st.multiselect("Category", df["category"].unique().tolist(),
-                                default=df["category"].unique().tolist())
-    countries = st.multiselect("Country", df["country"].unique().tolist(),
-                               default=df["country"].unique().tolist())
+    status = st.multiselect("Status", df["status"].unique().tolist(), default=["Completed"])
+    segments = st.multiselect("Segment", df["segment"].unique().tolist(), default=df["segment"].unique().tolist())
+    categories = st.multiselect("Category", df["category"].unique().tolist(), default=df["category"].unique().tolist())
+    countries = st.multiselect("Country", df["country"].unique().tolist(), default=df["country"].unique().tolist())
 
 mask = (
     df["status"].isin(status) &
@@ -73,12 +73,10 @@ st.subheader("Revenue Over Time")
 st.line_chart(d.loc[completed].groupby("order_month")["revenue"].sum())
 
 st.subheader("Top Categories")
-st.bar_chart(d.loc[completed].groupby("category")["revenue"].sum()
-             .sort_values(ascending=False).head(10))
+st.bar_chart(d.loc[completed].groupby("category")["revenue"].sum().sort_values(ascending=False).head(10))
 
 st.subheader("Segments by Revenue")
-st.bar_chart(d.loc[completed].groupby("segment")["revenue"].sum()
-             .sort_values(ascending=False))
+st.bar_chart(d.loc[completed].groupby("segment")["revenue"].sum().sort_values(ascending=False))
 
 # ---------------- Data table ----------------
 st.subheader("Filtered Orders (sample)")
@@ -89,7 +87,6 @@ st.dataframe(d.head(500), use_container_width=True)
 def to_csv_bytes(df_in: pd.DataFrame) -> bytes:
     return df_in.to_csv(index=False).encode("utf-8")
 
-# Monthly KPIs (robust to missing statuses)
 completed_d = d[d["status"] == "Completed"]
 monthly_kpis = completed_d.groupby("order_month").agg(
     revenue=("revenue","sum"),
@@ -97,16 +94,12 @@ monthly_kpis = completed_d.groupby("order_month").agg(
     aov=("revenue","mean"),
 ).reset_index()
 
-# Build rates table; ensure both columns exist even if absent in the filter
-rates = (d.groupby("order_month")["status"]
-           .value_counts(normalize=True)
-           .unstack(fill_value=0.0))
+rates = (d.groupby("order_month")["status"].value_counts(normalize=True).unstack(fill_value=0.0))
 for col in ["Completed", "Refunded"]:
     if col not in rates.columns:
         rates[col] = 0.0
 rates = rates[["Completed", "Refunded"]]
 
-# Align to monthly_kpis index and convert to %
 monthly_kpis = monthly_kpis.merge(
     rates.mul(100).reset_index()[["order_month", "Completed", "Refunded"]],
     on="order_month", how="left"
@@ -114,16 +107,8 @@ monthly_kpis = monthly_kpis.merge(
 
 dl_col1, dl_col2 = st.columns(2)
 with dl_col1:
-    st.download_button(
-        "Download filtered orders (CSV)",
-        data=to_csv_bytes(d),
-        file_name="filtered_orders.csv",
-        mime="text/csv"
-    )
+    st.download_button("Download filtered orders (CSV)", data=to_csv_bytes(d),
+                       file_name="filtered_orders.csv", mime="text/csv")
 with dl_col2:
-    st.download_button(
-        "Download monthly KPIs (CSV)",
-        data=to_csv_bytes(monthly_kpis),
-        file_name="monthly_kpis.csv",
-        mime="text/csv"
-    )
+    st.download_button("Download monthly KPIs (CSV)", data=to_csv_bytes(monthly_kpis),
+                       file_name="monthly_kpis.csv", mime="text/csv")
