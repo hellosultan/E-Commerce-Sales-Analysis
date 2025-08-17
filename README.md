@@ -74,3 +74,12 @@ It demonstrates how I can transform raw CSV data into actionable insights with i
 	•	Extend KPIs (Customer Lifetime Value, Profit Margins, etc.)
 	•	Enable SQL database integration for live data
 	•	Add forecasting models (predictive analytics with Prophet/ARIMA)
+	
+⸻  
+
+🔒 Data Privacy  
+- All uploaded CSV files are processed **only in memory**.  
+- No data is stored, logged, or shared outside the app session.  
+- Once you close or refresh the app, your uploaded data is no longer available.  
+
+This ensures that your data remains private and secure while using the demo.
