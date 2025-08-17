@@ -19,6 +19,22 @@ def first_writable(candidates):
 DB_PATH = first_writable([Path("data/ecommerce.db"), Path("/mount/tmp/ecommerce.db")])
 BUILDER = Path("src/sql/build_db.py")
 
+# -------- CSV Upload Helpers --------
+def _normalize_cols(df):
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    return df
+
+def load_uploaded(file) -> pd.DataFrame:
+    df = pd.read_csv(file)
+    df = _normalize_cols(df)
+
+    required = {"order_id", "order_date", "quantity", "unit_price"}
+    if not required.issubset(df.columns):
+        raise ValueError(f"Missing columns: {required - set(df.columns)}")
+
+    df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
+    df["revenue"] = df["quantity"] * df["unit_price"]
+    return df
 # ---------- Helpers ----------
 def build_db():
     import subprocess, sys
@@ -98,16 +114,31 @@ df = load_data()
 # =================== UI ===================
 with st.sidebar:
     st.header("Filters")
+
+    # ---- CSV Upload ----
+    uploaded_file = st.file_uploader("Upload your sales CSV", type=["csv"])
+    if uploaded_file:
+        try:
+            df = load_uploaded(uploaded_file)
+            st.success("✅ CSV uploaded and loaded successfully!")
+        except Exception as e:
+            st.error(f"⚠️ Error processing file: {e}")
+            df = load_data()  # fallback
+    else:
+        df = load_data()  # default dataset (SQLite/synthetic)
+
+    # ---- Filters ----
     min_d, max_d = df["order_date"].min().date(), df["order_date"].max().date()
     dr = st.date_input("Date range", value=(min_d, max_d))
     if isinstance(dr, tuple) and len(dr) == 2:
         df = df[(df["order_date"].dt.date >= dr[0]) & (df["order_date"].dt.date <= dr[1])]
 
-    status = st.multiselect("Status", df["status"].unique().tolist(), default=["Completed"])
-    segments = st.multiselect("Segment", df["segment"].unique().tolist(), default=df["segment"].unique().tolist())
-    categories = st.multiselect("Category", df["category"].unique().tolist(), default=df["category"].unique().tolist())
-    countries = st.multiselect("Country", df["country"].unique().tolist(), default=df["country"].unique().tolist())
+    status    = st.multiselect("Status",   df["status"].unique().tolist(),   default=["Completed"])
+    segments  = st.multiselect("Segment",  df["segment"].unique().tolist(),  default=df["segment"].unique().tolist())
+    categories= st.multiselect("Category", df["category"].unique().tolist(), default=df["category"].unique().tolist())
+    countries = st.multiselect("Country",  df["country"].unique().tolist(),  default=df["country"].unique().tolist())
 
+# (outside the sidebar)
 mask = (
     df["status"].isin(status)
     & df["segment"].isin(segments)
@@ -117,6 +148,14 @@ mask = (
 d = df[mask].copy()
 completed = d["status"].eq("Completed")
 refunded  = d["status"].eq("Refunded")
+
+# Allow user to download filtered dataset
+st.download_button(
+    label="⬇️ Download filtered data as CSV",
+    data=d.to_csv(index=False).encode("utf-8"),
+    file_name="filtered_sales.csv",
+    mime="text/csv",
+)
 
 # KPIs
 revenue = d.loc[completed, "revenue"].sum()
