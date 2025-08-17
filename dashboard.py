@@ -3,35 +3,84 @@ from pathlib import Path
 
 st.set_page_config(page_title="E-Commerce Sales", layout="wide")
 
-@st.cache_data
+DB_PATH = Path("data/ecommerce.db")
+BUILDER = Path("src/sql/build_db.py")
+
+def build_db():
+    """Create data dir and build the SQLite DB."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    import subprocess, sys
+    st.info("Building SQLite database (first run)…")
+    subprocess.run([sys.executable, str(BUILDER)], check=True)
+
+def tables_ok(conn) -> bool:
+    """Return True if required tables exist."""
+    try:
+        t = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", conn)
+        need = {"orders", "products", "customers"}
+        return need.issubset(set(t["name"]))
+    except Exception:
+        return False
+
+@st.cache_data(show_spinner=True)
 def load_data():
-    db = Path("data/ecommerce.db")
-    # 1) Make sure directory exists on Streamlit Cloud
-    db.parent.mkdir(parents=True, exist_ok=True)
+    # Ensure DB exists
+    if not DB_PATH.exists():
+        build_db()
 
-    # 2) Build DB if missing (first run)
-    if not db.exists():
-        import subprocess, sys
-        subprocess.run([sys.executable, "src/sql/build_db.py"], check=True)
+    # Try read; if it fails or tables missing, rebuild once and retry.
+    def _read():
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            if not tables_ok(conn):
+                conn.close()
+                build_db()
+                conn = sqlite3.connect(str(DB_PATH))
+            df = pd.read_sql(
+                """
+                SELECT o.order_id, o.order_date, o.quantity, o.discount, o.shipping, o.status,
+                       p.product_id, p.category, p.base_price,
+                       c.customer_id, c.segment, c.country
+                FROM orders o
+                JOIN products p USING(product_id)
+                JOIN customers c USING(customer_id)
+                """,
+                conn,
+                parse_dates=["order_date"],
+            )
+            return df
+        except Exception as e:
+            # Rebuild once more if anything went wrong; then raise if it still fails
+            conn.close()
+            build_db()
+            conn = sqlite3.connect(str(DB_PATH))
+            df = pd.read_sql(
+                """
+                SELECT o.order_id, o.order_date, o.quantity, o.discount, o.shipping, o.status,
+                       p.product_id, p.category, p.base_price,
+                       c.customer_id, c.segment, c.country
+                FROM orders o
+                JOIN products p USING(product_id)
+                JOIN customers c USING(customer_id)
+                """,
+                conn,
+                parse_dates=["order_date"],
+            )
+            return df
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
-    # 3) Connect with a string path (robust across environments)
-    conn = sqlite3.connect(str(db))
-    df = pd.read_sql("""
-    SELECT o.order_id, o.order_date, o.quantity, o.discount, o.shipping, o.status,
-           p.product_id, p.category, p.base_price,
-           c.customer_id, c.segment, c.country
-    FROM orders o
-    JOIN products p USING(product_id)
-    JOIN customers c USING(customer_id)
-    """, conn, parse_dates=["order_date"])
-    conn.close()
+    df = _read()
     df["order_month"] = df["order_date"].dt.to_period("M").dt.to_timestamp()
     df["revenue"] = (df["base_price"] * (1 - df["discount"])) * df["quantity"]
     return df
 
 df = load_data()
 
-# ---------------- Sidebar filters ----------------
+# --------------- Sidebar filters ---------------
 with st.sidebar:
     st.header("Filters")
     min_d, max_d = df["order_date"].min().date(), df["order_date"].max().date()
@@ -45,21 +94,21 @@ with st.sidebar:
     countries = st.multiselect("Country", df["country"].unique().tolist(), default=df["country"].unique().tolist())
 
 mask = (
-    df["status"].isin(status) &
-    df["segment"].isin(segments) &
-    df["category"].isin(categories) &
-    df["country"].isin(countries)
+    df["status"].isin(status)
+    & df["segment"].isin(segments)
+    & df["category"].isin(categories)
+    & df["country"].isin(countries)
 )
 d = df[mask].copy()
 completed = d["status"].eq("Completed")
-refunded  = d["status"].eq("Refunded")
+refunded = d["status"].eq("Refunded")
 
-# ---------------- KPIs row ----------------
+# --------------- KPIs ---------------
 revenue = d.loc[completed, "revenue"].sum()
-orders  = len(d)
-aov     = d.loc[completed, "revenue"].mean() if completed.any() else 0.0
+orders = len(d)
+aov = d.loc[completed, "revenue"].mean() if completed.any() else 0.0
 completion_rate = float(completed.mean() * 100)
-refund_rate     = float(refunded.mean() * 100)
+refund_rate = float(refunded.mean() * 100)
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Revenue", f"${revenue:,.0f}")
@@ -68,7 +117,7 @@ c3.metric("AOV", f"${aov:,.2f}")
 c4.metric("Completion Rate", f"{completion_rate:.1f}%")
 c5.metric("Refund Rate", f"{refund_rate:.1f}%")
 
-# ---------------- Charts ----------------
+# --------------- Charts ---------------
 st.subheader("Revenue Over Time")
 st.line_chart(d.loc[completed].groupby("order_month")["revenue"].sum())
 
@@ -78,23 +127,22 @@ st.bar_chart(d.loc[completed].groupby("category")["revenue"].sum().sort_values(a
 st.subheader("Segments by Revenue")
 st.bar_chart(d.loc[completed].groupby("segment")["revenue"].sum().sort_values(ascending=False))
 
-# ---------------- Data table ----------------
+# --------------- Data & Downloads ---------------
 st.subheader("Filtered Orders (sample)")
 st.dataframe(d.head(500), use_container_width=True)
 
-# ---------------- Downloads ----------------
 @st.cache_data
 def to_csv_bytes(df_in: pd.DataFrame) -> bytes:
     return df_in.to_csv(index=False).encode("utf-8")
 
 completed_d = d[d["status"] == "Completed"]
 monthly_kpis = completed_d.groupby("order_month").agg(
-    revenue=("revenue","sum"),
-    orders=("order_id","count"),
-    aov=("revenue","mean"),
+    revenue=("revenue", "sum"),
+    orders=("order_id", "count"),
+    aov=("revenue", "mean"),
 ).reset_index()
 
-rates = (d.groupby("order_month")["status"].value_counts(normalize=True).unstack(fill_value=0.0))
+rates = d.groupby("order_month")["status"].value_counts(normalize=True).unstack(fill_value=0.0)
 for col in ["Completed", "Refunded"]:
     if col not in rates.columns:
         rates[col] = 0.0
@@ -102,7 +150,8 @@ rates = rates[["Completed", "Refunded"]]
 
 monthly_kpis = monthly_kpis.merge(
     rates.mul(100).reset_index()[["order_month", "Completed", "Refunded"]],
-    on="order_month", how="left"
+    on="order_month",
+    how="left",
 ).rename(columns={"Completed": "completion_rate", "Refunded": "refund_rate"}).fillna(0.0)
 
 dl_col1, dl_col2 = st.columns(2)
