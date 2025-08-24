@@ -1,18 +1,21 @@
-📊 E-Commerce Sales Analysis Dashboard
-# 📊 E-Commerce Sales Analysis Dashboard
+# 📊 E-Commerce Sales Analysis
 
-[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-red?logo=streamlit)](https://streamlit.io/)
-[![Pandas](https://img.shields.io/badge/Pandas-Data%20Analysis-green?logo=pandas)](https://pandas.pydata.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
-[![Stars](https://img.shields.io/github/stars/hellosultan/E-Commerce-Sales-Analysis?style=social)](https://github.com/hellosultan/E-Commerce-Sales-Analysis/stargazers)
-[![Forks](https://img.shields.io/github/forks/hellosultan/E-Commerce-Sales-Analysis?style=social)](https://github.com/hellosultan/E-Commerce-Sales-Analysis/network/members)
-[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen?logo=streamlit)](https://e-commerce-sales-analysis-vtpypl4ffavy235wksswyn.streamlit.app/)
+[![Hugging Face Spaces](https://img.shields.io/badge/🤗-HuggingFace%20Demo-blue)](https://huggingface.co/spaces/hellosultan/Ecommerce-Sales-Analysis)
+[![GitHub Repo](https://img.shields.io/badge/📂-Source%20Code-black)](https://github.com/hellosultan/E-Commerce-Sales-Analysis)
 
 ---
 
-## 🚀 Recruiter Quick View  
-- 🌐 [**Live Demo (Streamlit App)**](https://e-commerce-sales-analysis-vtpypl4ffavy235wksswyn.streamlit.app/)  
+## 📖 Overview
+An interactive E-Commerce Sales Dashboard built with **Python, Pandas, and Streamlit**.  
+
+Upload your own CSV data or explore the synthetic dataset to view KPIs and trends:
+- Revenue, Orders, Completion Rate, Refund Rate  
+- Filters for Date, Status, Segment, Category, Country  
+- Charts for monthly revenue and sales by category/segment  
+- Download filtered data & KPI summaries as CSV  
+
+👉 Try it live here: [**Hugging Face Space**](https://huggingface.co/spaces/hellosultan/Ecommerce-Sales-Analysis)
+
 - 📂 [**Code Repository: This GitHub repo**](https://github.com/hellosultan/E-Commerce-Sales-Analysis)  
 
 ⸻
